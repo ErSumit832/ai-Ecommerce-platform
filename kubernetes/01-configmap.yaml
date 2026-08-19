@@ -1,0 +1,19 @@
+# Non-secret configuration only. Anything sensitive (API keys, DB credentials,
+# JWT signing key) belongs in 01-secret.yaml instead — never here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ecommerce-config
+  namespace: ecommerce-ai
+data:
+  APP_NAME: "AI-Powered E-Commerce Platform"
+  ENVIRONMENT: "production"
+  DEBUG: "false"
+  ALGORITHM: "HS256"
+  ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+  REFRESH_TOKEN_EXPIRE_DAYS: "7"
+  # Update to your real domain(s) before applying
+  CORS_ORIGINS: "https://app.yourdomain.com"
+  AI_PROVIDER: "openai"
+  AI_MODEL_OPENAI: "gpt-4o-mini"
+  AI_MODEL_ANTHROPIC: "claude-sonnet-4-6"

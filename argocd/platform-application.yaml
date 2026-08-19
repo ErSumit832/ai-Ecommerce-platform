@@ -1,0 +1,37 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ecommerce-platform
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: ecommerce-ai
+
+  source:
+    repoURL: https://github.com/YOUR_ORG/ecommerce-ai.git
+    targetRevision: main
+    path: kubernetes
+    directory:
+      # Namespace, config, secret template, dev/demo Postgres, and Ingress —
+      # everything backend/frontend depend on but that Jenkins never
+      # touches (it only ever edits the two Deployment files).
+      include: "{00-namespace.yaml,01-configmap.yaml,03-postgres.yaml,30-ingress.yaml}"
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ecommerce-ai
+
+  syncPolicy:
+    automated:
+      prune: true      # remove resources deleted from git
+      selfHeal: true    # revert manual kubectl edits back to what's in git
+    syncOptions:
+      - CreateNamespace=false   # namespace is managed explicitly via 00-namespace.yaml
+      - PrunePropagationPolicy=foreground
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

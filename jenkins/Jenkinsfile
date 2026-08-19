@@ -1,0 +1,223 @@
+// ============================================================================
+// Jenkinsfile — GitHub -> Jenkins -> SonarQube -> Trivy -> Docker Build ->
+//               ECR -> (git push to manifests) -> ArgoCD -> EKS
+//
+// Jenkins deliberately stops at "push updated image tag to git." It never
+// runs kubectl or touches the cluster directly — ArgoCD, watching this same
+// repo, is the only thing with cluster-apply permissions. That split is the
+// point of GitOps: Jenkins builds and proves an artifact is safe to ship,
+// ArgoCD is the sole path by which anything actually reaches the cluster.
+// ============================================================================
+
+pipeline {
+    agent { label 'docker-agent' } // needs: docker, aws-cli v2, trivy, git, sonar-scanner
+
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        ansiColor('xterm')
+    }
+
+    parameters {
+        booleanParam(name: 'SKIP_QUALITY_GATE', defaultValue: false,
+            description: 'Emergency override — skip the SonarQube quality gate. Requires manual approval, logged.')
+    }
+
+    environment {
+        AWS_REGION      = 'us-east-1'
+        AWS_ACCOUNT_ID  = credentials('aws-account-id')          // Secret text credential
+        ECR_REGISTRY    = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        BACKEND_IMAGE   = "${ECR_REGISTRY}/ecommerce-ai-backend"
+        FRONTEND_IMAGE  = "${ECR_REGISTRY}/ecommerce-ai-frontend"
+        IMAGE_TAG       = "${env.GIT_COMMIT.take(7)}-${env.BUILD_NUMBER}"
+
+        SONAR_PROJECT_KEY_BACKEND  = 'ecommerce-ai-backend'
+        SONAR_PROJECT_KEY_FRONTEND = 'ecommerce-ai-frontend'
+
+        GITOPS_REPO   = 'git@github.com:YOUR_ORG/ecommerce-ai.git'
+        GITOPS_BRANCH = 'main'
+
+        // Baked into the frontend JS bundle at image build time (see
+        // frontend/Dockerfile) — update per environment/branch as needed.
+        VITE_API_URL  = 'https://app.yourdomain.com'
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+                script {
+                    env.GIT_COMMIT_SHORT = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+                }
+            }
+        }
+
+        stage('Static Analysis — SonarQube') {
+            parallel {
+                stage('Backend') {
+                    steps {
+                        dir('backend') {
+                            withSonarQubeEnv('SonarQubeServer') {
+                                sh """
+                                    sonar-scanner \
+                                      -Dsonar.projectKey=${SONAR_PROJECT_KEY_BACKEND} \
+                                      -Dsonar.sources=app \
+                                      -Dsonar.python.version=3.11
+                                """
+                            }
+                        }
+                    }
+                }
+                stage('Frontend') {
+                    steps {
+                        dir('frontend') {
+                            withSonarQubeEnv('SonarQubeServer') {
+                                sh """
+                                    sonar-scanner \
+                                      -Dsonar.projectKey=${SONAR_PROJECT_KEY_FRONTEND} \
+                                      -Dsonar.sources=src \
+                                      -Dsonar.exclusions=node_modules/**,dist/**
+                                """
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            when { expression { !params.SKIP_QUALITY_GATE } }
+            steps {
+                // Fails the build if SonarQube's quality gate comes back red
+                // (coverage, duplication, new bugs/vulnerabilities thresholds).
+                timeout(time: 10, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('Dependency Scan — Trivy (filesystem)') {
+            parallel {
+                stage('Backend deps') {
+                    steps {
+                        sh """
+                            trivy fs --exit-code 1 --severity HIGH,CRITICAL \
+                              --skip-dirs venv,.venv \
+                              backend/requirements.txt
+                        """
+                    }
+                }
+                stage('Frontend deps') {
+                    steps {
+                        sh """
+                            trivy fs --exit-code 1 --severity HIGH,CRITICAL \
+                              --skip-dirs node_modules \
+                              frontend/package.json
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Docker Build') {
+            parallel {
+                stage('Backend image') {
+                    steps {
+                        sh """
+                            docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG} \
+                              -t ${BACKEND_IMAGE}:latest \
+                              backend
+                        """
+                    }
+                }
+                stage('Frontend image') {
+                    steps {
+                        sh """
+                            docker build \
+                              --build-arg VITE_API_URL=${VITE_API_URL} \
+                              -t ${FRONTEND_IMAGE}:${IMAGE_TAG} \
+                              -t ${FRONTEND_IMAGE}:latest \
+                              frontend
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Image Scan — Trivy (container)') {
+            parallel {
+                stage('Backend image') {
+                    steps {
+                        sh """
+                            trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed \
+                              ${BACKEND_IMAGE}:${IMAGE_TAG}
+                        """
+                    }
+                }
+                stage('Frontend image') {
+                    steps {
+                        sh """
+                            trivy image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed \
+                              ${FRONTEND_IMAGE}:${IMAGE_TAG}
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Push to ECR') {
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'jenkins-ecr-credentials'
+                ]]) {
+                    sh """
+                        aws ecr get-login-password --region ${AWS_REGION} \
+                          | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+
+                        docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
+                        docker push ${BACKEND_IMAGE}:latest
+                        docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
+                        docker push ${FRONTEND_IMAGE}:latest
+                    """
+                }
+            }
+        }
+
+        stage('Update GitOps Manifests') {
+            steps {
+                // Jenkins' only cluster-adjacent action: bump the image tag in
+                // the Kubernetes manifests and push. ArgoCD (already watching
+                // this repo/branch) picks up the diff and does the actual
+                // deploy — see argocd/README.md.
+                sshagent(credentials: ['jenkins-git-ssh-key']) {
+                    sh """
+                        git config user.email "jenkins@ecommerce-ai.local"
+                        git config user.name "Jenkins CI"
+
+                        sed -i "s#image: .*ecommerce-ai-backend.*#image: ${BACKEND_IMAGE}:${IMAGE_TAG}#" kubernetes/10-backend-deployment.yaml
+                        sed -i "s#image: .*ecommerce-ai-frontend.*#image: ${FRONTEND_IMAGE}:${IMAGE_TAG}#" kubernetes/20-frontend-deployment.yaml
+
+                        git add kubernetes/10-backend-deployment.yaml kubernetes/20-frontend-deployment.yaml
+                        git commit -m "ci: deploy backend/frontend @ ${IMAGE_TAG} [skip ci]" || echo "No changes to commit"
+                        git push ${GITOPS_REPO} HEAD:${GITOPS_BRANCH}
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Built and pushed ${IMAGE_TAG}. ArgoCD will sync it to EKS within its poll interval (or immediately, if webhook-triggered — see argocd/README.md)."
+        }
+        failure {
+            echo "Pipeline failed — nothing was pushed to the GitOps manifests, so the cluster's current deployment is untouched."
+        }
+        always {
+            sh 'docker image prune -f || true'
+        }
+    }
+}

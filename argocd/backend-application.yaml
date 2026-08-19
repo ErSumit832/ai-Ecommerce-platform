@@ -1,0 +1,33 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ecommerce-backend
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: ecommerce-ai
+
+  source:
+    repoURL: https://github.com/YOUR_ORG/ecommerce-ai.git
+    targetRevision: main
+    path: kubernetes
+    directory:
+      include: "{10-backend-deployment.yaml,11-backend-service.yaml,12-backend-hpa.yaml}"
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ecommerce-ai
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

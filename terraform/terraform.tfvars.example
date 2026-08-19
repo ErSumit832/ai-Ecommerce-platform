@@ -1,0 +1,13 @@
+aws_region      = "us-east-1"
+project_name    = "ecommerce-ai"
+environment     = "production"
+vpc_cidr        = "10.20.0.0/16"
+az_count        = 3
+cluster_version = "1.30"
+
+node_instance_types = ["t3.large"]
+node_min_size       = 2
+node_max_size       = 6
+node_desired_size   = 2
+
+single_nat_gateway = true

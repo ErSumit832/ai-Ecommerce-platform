@@ -1,0 +1,31 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: ecommerce-ai
+  namespace: argocd
+spec:
+  description: Circuitry — AI-powered e-commerce platform
+
+  sourceRepos:
+    - "https://github.com/YOUR_ORG/ecommerce-ai.git"
+
+  destinations:
+    - namespace: ecommerce-ai
+      server: https://kubernetes.default.svc
+
+  # Only the resource kinds this project actually needs — narrower than
+  # ArgoCD's wide-open default, so a misconfigured Application in this
+  # project can't, say, create ClusterRoles it has no business touching.
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+  roles:
+    - name: read-only
+      description: Read-only access for reviewing sync status/history
+      policies:
+        - p, proj:ecommerce-ai:read-only, applications, get, ecommerce-ai/*, allow
