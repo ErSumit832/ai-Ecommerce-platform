@@ -2,6 +2,7 @@ pipeline {
     agent any
 
     environment {
+
         SONAR_HOST_URL = "http://172.21.42.100:9000"
 
         BACKEND_IMAGE = "sumitkdevops/ai-backend"
@@ -13,9 +14,12 @@ pipeline {
     options {
         timestamps()
         disableConcurrentBuilds()
-        buildDiscarder(logRotator(
-            numToKeepStr: '10'
-        ))
+
+        buildDiscarder(
+            logRotator(
+                numToKeepStr: '20'
+            )
+        )
     }
 
     stages {
@@ -57,7 +61,7 @@ pipeline {
                         sh """
                         ${scannerHome}/bin/sonar-scanner \
                         -Dsonar.projectKey=ai-ecommerce \
-                        -Dsonar.projectName="AI Ecommerce Platform" \
+                        -Dsonar.projectName='AI Ecommerce Platform' \
                         -Dsonar.sources=. \
                         -Dsonar.host.url=${SONAR_HOST_URL} \
                         -Dsonar.login=$SONAR_TOKEN
@@ -101,6 +105,8 @@ pipeline {
             steps {
                 sh """
                 trivy image \
+                --severity HIGH,CRITICAL \
+                --no-progress \
                 ${BACKEND_IMAGE}:${IMAGE_TAG}
                 """
             }
@@ -110,15 +116,16 @@ pipeline {
             steps {
                 sh """
                 trivy image \
+                --severity HIGH,CRITICAL \
+                --no-progress \
                 ${FRONTEND_IMAGE}:${IMAGE_TAG}
                 """
             }
         }
 
-        
-        stage('Push Docker Images') {
-
+        stage('Docker Hub Login') {
             steps {
+
                 withCredentials([
                     usernamePassword(
                         credentialsId: 'dockerhub-creds',
@@ -128,41 +135,54 @@ pipeline {
                 ]) {
 
                     sh '''
-                    echo $DOCKER_PASS | docker login \
-                    -u $DOCKER_USER \
+                    echo "$DOCKER_PASS" | docker login \
+                    -u "$DOCKER_USER" \
                     --password-stdin
-
-                    docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
-                    docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
                     '''
                 }
             }
         }
-        
 
-        
-        stage('Deploy to Kubernetes') {
+        stage('Push Docker Images') {
+            steps {
+
+                sh """
+                docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
+                docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
+                """
+
+            }
+        }
+
+        /*
+        stage('Deploy to KIND') {
             steps {
                 sh '''
                 kubectl apply -f k8s/
                 '''
             }
         }
-        
+        */
+
     }
 
     post {
 
         success {
-            echo 'Pipeline completed successfully'
+            echo '✅ Pipeline completed successfully'
         }
 
         failure {
-            echo 'Pipeline failed'
+            echo '❌ Pipeline failed'
         }
 
         always {
-            sh 'docker images | head'
+
+            sh '''
+            docker image ls | head
+            '''
+
+            cleanWs()
         }
     }
 }
