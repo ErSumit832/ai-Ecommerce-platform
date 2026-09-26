@@ -155,11 +155,23 @@ pipeline {
         }
 
         
-        stage('Deploy to KIND') {
+        stage('Deploy Namespace') {
             steps {
-                sh '''
-                kubectl apply -f k8s/
-                '''
+               sh 'kubectl apply -f k8s/namespace.yml'
+            }
+        }
+
+        stage('Deploy Application') {
+            steps {
+               sh '''
+               sleep 5
+                 kubectl apply -f k8s/postgres-deployment.yaml
+                  kubectl apply -f k8s/postgres-service.yaml
+                  kubectl apply -f k8s/backend-deployment.yaml
+                  kubectl apply -f k8s/backend-service.yaml
+                  kubectl apply -f k8s/frontend-deployment.yaml
+                  kubectl apply -f k8s/frontend-service.yaml
+                 '''
             }
         }
         
