@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-frontend
+  namespace: ai-ecommerce
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai-frontend
+  template:
+    metadata:
+      labels:
+        app: ai-frontend
+    spec:
+      containers:
+      - name: ai-frontend
+        image: sumitkdevops/ai-frontend:5
+        ports:
+        - containerPort: 80
