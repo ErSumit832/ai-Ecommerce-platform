@@ -154,7 +154,7 @@ pipeline {
             }
         }
 
-        /*
+        
         stage('Deploy to KIND') {
             steps {
                 sh '''
@@ -162,7 +162,7 @@ pipeline {
                 '''
             }
         }
-        */
+        
 
     }
 
