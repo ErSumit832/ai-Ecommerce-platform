@@ -1,6 +1,7 @@
 pipeline {
     agent any
-        stages {
+
+    stages {
 
         stage('Checkout') {
             steps {
@@ -8,5 +9,12 @@ pipeline {
             }
         }
 
-   }
+        stage('Workspace') {
+            steps {
+                sh 'pwd'
+                sh 'ls -la'
+            }
+        }
+
+    }
 }
