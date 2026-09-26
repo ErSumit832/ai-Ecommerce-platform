@@ -4,8 +4,8 @@ pipeline {
     environment {
         SONAR_HOST_URL = "http://172.21.42.100:9000"
 
-        BACKEND_IMAGE = "ersumit832/ai-backend"
-        FRONTEND_IMAGE = "ersumit832/ai-frontend"
+        BACKEND_IMAGE = "sumitkdevops/ai-backend"
+        FRONTEND_IMAGE = "sumitkdevops/ai-frontend"
 
         IMAGE_TAG = "${BUILD_NUMBER}"
     }
